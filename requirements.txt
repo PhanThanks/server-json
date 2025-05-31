@@ -1,0 +1,17 @@
+Flask==2.3.3
+torch==2.0.1
+torchvision==0.15.2
+opencv-python-headless==4.8.1.78
+numpy==1.24.3
+Pillow==10.0.1
+ultralytics==8.0.196
+PyYAML==6.0.1
+requests==2.31.0
+matplotlib==3.7.2
+seaborn==0.12.2
+pandas==2.0.3
+scipy==1.11.3
+tqdm==4.66.1
+psutil==5.9.5
+thop==0.1.1.post2209072238
+gunicorn==21.2.0
