@@ -1,229 +1,271 @@
-from flask import Flask, request, jsonify, render_template_string
-import torch
-import cv2
-import numpy as np
-import base64
+from flask import Flask, request, jsonify
+import requests
 import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from email.mime.base import MIMEBase
-from email import encoders
+import base64
 import io
-import os
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
 from datetime import datetime
-import logging
+import os
+from PIL import Image, ImageDraw, ImageFont
 
 app = Flask(__name__)
-logging.basicConfig(level=logging.INFO)
 
-# Email configuration
-EMAIL_SENDER = "esp32cambot.project@gmail.com"
-EMAIL_PASSWORD = "auifdtdgpgwovrjp"
-EMAIL_RECIPIENT = "esp32cambot.project@gmail.com"
-SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 587
+# Configuration
+YOLO_API_URL = "http://192.168.2.152:5001/detect"  # Your local YOLO API server
+GMAIL_USER = os.environ.get('esp32cambot.project@gmail.com')
+GMAIL_PASSWORD = os.environ.get('auifdtdgpgwovrjp')  # Use App Password
+RECIPIENT_EMAIL = os.environ.get('esp32cambot.project@gmail.com')
 
-# Load YOLOv5 model
-try:
-    # Use the official YOLOv5s model pre-trained on COCO dataset
-    model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True)
-    model.eval()
-    print("YOLOv5 model loaded successfully!")
-except Exception as e:
-    print(f"Error loading model: {e}")
-    model = None
-
-def send_warning_email(image_data, detections):
-    """Send warning email with detected person image"""
-    try:
-        msg = MIMEMultipart()
-        msg['From'] = EMAIL_SENDER
-        msg['To'] = EMAIL_RECIPIENT
-        msg['Subject'] = "🚨 PERSON DETECTED - Security Alert"
-        
-        # Create HTML email body
-        html_body = f"""
-        <html>
-            <body>
-                <h2 style="color: red;">🚨 PERSON DETECTED!</h2>
-                <p><strong>Alert Time:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
-                <p><strong>Detection Details:</strong></p>
-                <ul>
-                    <li>Number of persons detected: {len([d for d in detections if d['class'] == 'person'])}</li>
-                    <li>Confidence levels: {[f"{d['confidence']:.2f}" for d in detections if d['class'] == 'person']}</li>
-                </ul>
-                <p>Please find the captured image with detection boxes attached to this email.</p>
-                <hr>
-                <p><em>ESP32-CAM Security System with AI Person Detection</em></p>
-            </body>
-        </html>
-        """
-        
-        msg.attach(MIMEText(html_body, 'html'))
-        
-        # Attach processed image
-        img_part = MIMEBase('application', 'octet-stream')
-        img_part.set_payload(image_data)
-        encoders.encode_base64(img_part)
-        img_part.add_header(
-            'Content-Disposition',
-            f'attachment; filename="person_detected_{datetime.now().strftime("%Y%m%d_%H%M%S")}.jpg"'
-        )
-        msg.attach(img_part)
-        
-        # Send email
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-            server.starttls()
-            server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-            server.send_message(msg)
-        
-        print("Warning email sent successfully!")
-        return True
-        
-    except Exception as e:
-        print(f"Error sending email: {e}")
-        return False
-
-def detect_persons(image):
-    """Detect persons in image using YOLOv5"""
-    if model is None:
-        return [], image
-    
-    try:
-        # Run inference
-        results = model(image)
-        
-        # Process results
-        detections = []
-        annotated_image = image.copy()
-        
-        # Get predictions
-        pred = results.pred[0]  # predictions for first image
-        
-        if len(pred) > 0:
-            for detection in pred:
-                x1, y1, x2, y2, conf, cls = detection.tolist()
-                
-                # Get class name
-                class_name = model.names[int(cls)]
-                
-                # Only process person detections with confidence > 0.5
-                if class_name == 'person' and conf > 0.5:
-                    detections.append({
-                        'class': class_name,
-                        'confidence': conf,
-                        'bbox': [int(x1), int(y1), int(x2), int(y2)]
-                    })
-                    
-                    # Draw bounding box
-                    cv2.rectangle(annotated_image, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
-                    cv2.putText(annotated_image, f'Person {conf:.2f}', 
-                              (int(x1), int(y1)-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-        
-        return detections, annotated_image
-        
-    except Exception as e:
-        print(f"Error in person detection: {e}")
-        return [], image
+# Backup YOLO URLs in case primary fails
+YOLO_BACKUP_URLS = [
+    "http://127.0.0.1:5001/detect",
+    "http://localhost:5001/detect"
+]
 
 @app.route('/')
 def home():
-    """Simple status page"""
-    html = """
-    <html>
-        <head><title>ESP32-CAM YOLOv5 Person Detection Server</title></head>
-        <body style="font-family: Arial, sans-serif; margin: 40px;">
-            <h1>🤖 ESP32-CAM YOLOv5 Person Detection Server</h1>
-            <p><strong>Status:</strong> <span style="color: green;">Running</span></p>
-            <p><strong>Model:</strong> YOLOv5s (COCO dataset)</p>
-            <p><strong>Detection Target:</strong> Persons with confidence > 0.5</p>
-            
-            <h2>API Endpoints:</h2>
-            <ul>
-                <li><code>POST /detect</code> - Send image for person detection</li>
-                <li><code>GET /status</code> - Server status</li>
-            </ul>
-            
-            <h2>Usage:</h2>
-            <p>Send a POST request to <code>/detect</code> with image data in JSON format:</p>
-            <pre style="background: #f4f4f4; padding: 10px;">
-{
-    "image": "base64_encoded_image_data"
-}
-            </pre>
-            
-            <h2>Response:</h2>
-            <pre style="background: #f4f4f4; padding: 10px;">
-{
-    "person_detected": true/false,
-    "detections": [...],
-    "email_sent": true/false,
-    "message": "..."
-}
-            </pre>
-        </body>
-    </html>
-    """
-    return html
+    return "ESP32-CAM Motion Detection Server Running"
 
-@app.route('/status')
-def status():
-    """API status endpoint"""
-    return jsonify({
-        "status": "running",
-        "model_loaded": model is not None,
-        "timestamp": datetime.now().isoformat()
-    })
-
-@app.route('/detect', methods=['POST'])
-def detect_person():
-    """Main detection endpoint"""
+@app.route('/upload', methods=['POST'])
+def upload_photo():
     try:
-        # Get image data from request
-        data = request.get_json()
+        # Get image data from ESP32-CAM
+        image_data = request.get_data()
         
-        if not data or 'image' not in data:
-            return jsonify({"error": "No image data provided"}), 400
+        if not image_data:
+            return jsonify({"error": "No image data received"}), 400
         
-        # Decode base64 image
+        print(f"Received image of size: {len(image_data)} bytes at {datetime.now()}")
+        
+        # Send image to YOLO API for object detection
+        yolo_result = send_to_yolo(image_data)
+        
+        if yolo_result:
+            # Process YOLO results and create annotated image
+            annotated_image = process_yolo_results(image_data, yolo_result)
+            
+            # Send email with results
+            email_sent = send_email_notification(annotated_image, yolo_result)
+            
+            response_data = {
+                "status": "success",
+                "message": "Photo processed",
+                "detections": yolo_result.get('detections', []),
+                "detection_count": len(yolo_result.get('detections', [])),
+                "email_sent": email_sent,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            if email_sent:
+                response_data["message"] += " and email sent"
+            else:
+                response_data["message"] += " but email failed"
+            
+            return jsonify(response_data)
+        else:
+            # Even if YOLO fails, still send the original image via email
+            email_sent = send_email_notification(image_data, {"detections": []}, yolo_failed=True)
+            
+            return jsonify({
+                "status": "partial_success",
+                "message": "YOLO processing failed but email sent with original image",
+                "detections": [],
+                "email_sent": email_sent,
+                "timestamp": datetime.now().isoformat()
+            })
+            
+    except Exception as e:
+        print(f"Error processing upload: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+def send_to_yolo(image_data):
+    """Send image to YOLO API for object detection with fallback URLs"""
+    urls_to_try = [YOLO_API_URL] + YOLO_BACKUP_URLS
+    
+    for url in urls_to_try:
         try:
-            image_data = base64.b64decode(data['image'])
-            nparr = np.frombuffer(image_data, np.uint8)
-            image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            print(f"Trying YOLO API at: {url}")
             
-            if image is None:
-                raise ValueError("Invalid image data")
+            # Prepare the request to YOLO API
+            files = {'image': ('image.jpg', image_data, 'image/jpeg')}
+            
+            response = requests.post(url, files=files, timeout=10)
+            
+            if response.status_code == 200:
+                print(f"YOLO API success at: {url}")
+                result = response.json()
+                print(f"YOLO detected {len(result.get('detections', []))} objects")
+                return result
+            else:
+                print(f"YOLO API error at {url}: {response.status_code}")
                 
+        except requests.exceptions.ConnectTimeout:
+            print(f"Connection timeout to {url}")
+            continue
+        except requests.exceptions.ConnectionError:
+            print(f"Connection error to {url}")
+            continue
         except Exception as e:
-            return jsonify({"error": f"Invalid image format: {str(e)}"}), 400
+            print(f"Error calling YOLO API at {url}: {str(e)}")
+            continue
+    
+    print("All YOLO API endpoints failed")
+    return None
+
+def process_yolo_results(image_data, yolo_result):
+    """Process YOLO results and create annotated image"""
+    try:
+        # Open image
+        image = Image.open(io.BytesIO(image_data))
+        draw = ImageDraw.Draw(image)
         
-        # Detect persons
-        detections, annotated_image = detect_persons(image)
+        # Try to load a font (fallback to default if not available)
+        try:
+            font = ImageFont.truetype("arial.ttf", 20)
+        except:
+            font = ImageFont.load_default()
         
-        person_detected = len(detections) > 0
-        email_sent = False
+        # Draw bounding boxes and labels
+        detections = yolo_result.get('detections', [])
         
-        # Send warning email if person detected
-        if person_detected:
-            # Encode annotated image
-            _, buffer = cv2.imencode('.jpg', annotated_image)
-            annotated_image_data = buffer.tobytes()
+        for detection in detections:
+            # Assuming YOLO API returns: class, confidence, bbox coordinates
+            class_name = detection.get('class', 'Unknown')
+            confidence = detection.get('confidence', 0)
+            bbox = detection.get('bbox', [])  # [x1, y1, x2, y2]
             
-            email_sent = send_warning_email(annotated_image_data, detections)
+            if len(bbox) == 4:
+                x1, y1, x2, y2 = bbox
+                
+                # Draw bounding box
+                draw.rectangle([x1, y1, x2, y2], outline="red", width=3)
+                
+                # Draw label
+                label = f"{class_name}: {confidence:.2f}"
+                draw.text((x1, y1-25), label, fill="red", font=font)
         
-        response = {
-            "person_detected": person_detected,
-            "detections": detections,
-            "email_sent": email_sent,
-            "message": f"{'Person detected! Warning email sent.' if person_detected and email_sent else 'No person detected.' if not person_detected else 'Person detected but email failed.'}"
-        }
+        # Save annotated image to bytes
+        img_byte_arr = io.BytesIO()
+        image.save(img_byte_arr, format='JPEG')
+        img_byte_arr = img_byte_arr.getvalue()
         
-        print(f"Detection result: {response}")
-        return jsonify(response)
+        return img_byte_arr
         
     except Exception as e:
-        print(f"Error in detection endpoint: {e}")
-        return jsonify({"error": str(e)}), 500
+        print(f"Error processing image: {str(e)}")
+        return image_data  # Return original image if processing fails
+
+def send_email_notification(image_data, yolo_result, yolo_failed=False):
+    """Send email with detected objects and annotated image"""
+    try:
+        # Create message
+        msg = MIMEMultipart()
+        msg['From'] = GMAIL_USER
+        msg['To'] = RECIPIENT_EMAIL
+        
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        if yolo_failed:
+            msg['Subject'] = f"Motion Detected (YOLO Offline) - {timestamp}"
+        else:
+            detections = yolo_result.get('detections', [])
+            detection_count = len(detections)
+            msg['Subject'] = f"Motion Detected ({detection_count} objects) - {timestamp}"
+        
+        # Create email body
+        if yolo_failed:
+            body = f"""
+Motion detected by ESP32-CAM at {timestamp}
+
+YOLO API Server appears to be offline or unreachable.
+Object detection could not be performed.
+
+The original image is attached for manual review.
+
+YOLO Server Status: Offline/Unreachable
+Server URL: {YOLO_API_URL}
+"""
+        else:
+            detections = yolo_result.get('detections', [])
+            detection_count = len(detections)
+            
+            body = f"""
+Motion detected by ESP32-CAM at {timestamp}
+
+Detection Summary:
+• Objects detected: {detection_count}
+• YOLO API Status: Online
+
+"""
+            
+            if detection_count > 0:
+                body += "🔍 Detected objects:\n"
+                for i, detection in enumerate(detections, 1):
+                    class_name = detection.get('class', 'Unknown')
+                    confidence = detection.get('confidence', 0)
+                    body += f"   {i}. {class_name} (Confidence: {confidence:.1%})\n"
+            else:
+                body += "No specific objects detected in this image.\n"
+            
+            body += "\nSee attached annotated image for details."
+        
+        msg.attach(MIMEText(body, 'plain'))
+        
+        # Attach image
+        img_attachment = MIMEImage(image_data)
+        
+        if yolo_failed:
+            filename = f'motion_detected_{timestamp.replace(":", "-").replace(" ", "_")}.jpg'
+        else:
+            detection_count = len(yolo_result.get('detections', []))
+            filename = f'detection_{detection_count}objects_{timestamp.replace(":", "-").replace(" ", "_")}.jpg'
+        
+        img_attachment.add_header('Content-Disposition', 'attachment', filename=filename)
+        msg.attach(img_attachment)
+        
+        # Send email
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(GMAIL_USER, GMAIL_PASSWORD)
+        text = msg.as_string()
+        server.sendmail(GMAIL_USER, RECIPIENT_EMAIL, text)
+        server.quit()
+        
+        print(f"Email sent successfully to {RECIPIENT_EMAIL}")
+        return True
+        
+    except Exception as e:
+        print(f"Error sending email: {str(e)}")
+        return False
+
+@app.route('/test-yolo')
+def test_yolo():
+    """Test endpoint to check YOLO API connectivity"""
+    try:
+        # Test each YOLO URL
+        results = {}
+        urls_to_test = [YOLO_API_URL] + YOLO_BACKUP_URLS
+        
+        for url in urls_to_test:
+            try:
+                response = requests.get(url.replace('/detect', '/health'), timeout=5)
+                if response.status_code == 200:
+                    results[url] = "Online"
+                else:
+                    results[url] = f"Error {response.status_code}"
+            except:
+                results[url] = "Offline"
+        
+        return jsonify({
+            "yolo_servers": results,
+            "primary_server": YOLO_API_URL,
+            "timestamp": datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
