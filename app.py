@@ -13,10 +13,10 @@ from PIL import Image, ImageDraw, ImageFont
 app = Flask(__name__)
 
 # Configuration
-YOLO_API_URL = "http://192.168.2.152:5001/detect"  # Your local YOLO API server
-GMAIL_USER = os.environ.get('esp32cambot.project@gmail.com')
-GMAIL_PASSWORD = os.environ.get('auifdtdgpgwovrjp')  # Use App Password
-RECIPIENT_EMAIL = os.environ.get('esp32cambot.project@gmail.com')
+YOLO_API_URL = os.environ.get('YOLO_API_URL')  # Your local YOLO API server
+GMAIL_USER = os.environ.get('GMAIL_USER')
+GMAIL_PASSWORD = os.environ.get('GMAIL_PASSWORD')
+RECIPIENT_EMAIL = os.environ.get('RECIPIENT_EMAIL')
 
 # Backup YOLO URLs in case primary fails
 YOLO_BACKUP_URLS = [
