@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 # Configuration
-YOLO_API_URL = os.environ.get('YOLO_API_URL', 'http://127.0.0.1:5001/detect')
+YOLO_API_URL = os.environ.get('YOLO_API_URL')
 GMAIL_USER = os.environ.get('GMAIL_USER')
 GMAIL_PASSWORD = os.environ.get('GMAIL_PASSWORD')  # Use App Password for Gmail
 RECIPIENT_EMAIL = os.environ.get('RECIPIENT_EMAIL')
