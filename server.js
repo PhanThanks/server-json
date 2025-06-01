@@ -181,6 +181,86 @@ app.get('/health', (req, res) => {
     });
 });
 
+app.get('/', (req, res) => {
+    res.send(`
+        <html>
+        <head>
+            <title>ESP32-CAM Motion Detection Server</title>
+            <style>
+                body { font-family: Arial, sans-serif; margin: 50px; }
+                .container { max-width: 900px; margin: 0 auto; }
+                .event { border: 1px solid #ddd; margin: 10px 0; padding: 15px; border-radius: 5px; position: relative; }
+                .timestamp { color: #666; font-size: 0.9em; }
+                img { max-width: 300px; border-radius: 5px; margin: 10px 0; display: block; }
+                button.delete-btn {
+                    position: absolute;
+                    top: 10px;
+                    right: 10px;
+                    background: #e74c3c;
+                    color: white;
+                    border: none;
+                    padding: 5px 10px;
+                    border-radius: 3px;
+                    cursor: pointer;
+                }
+                button.delete-btn:hover {
+                    background: #c0392b;
+                }
+                h2 { margin-top: 40px; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>ESP32-CAM Motion Detection Server</h1>
+                <p>Server Status: <strong>Running</strong></p>
+                <p>Total Motion Events: <strong>${motionEvents.length}</strong></p>
+                
+                <h2>Recent Motion Events</h2>
+                ${motionEvents.slice(-10).reverse().map(event => `
+                    <div class="event" data-filename="${event.filename}">
+                        <button class="delete-btn">Xóa</button>
+                        <div class="timestamp">${event.timestamp}</div>
+                        <p><strong>Motion detected and image captured</strong></p>
+                        <p>Email sent: ${event.emailSent ? 'Yes' : 'Failed'}</p>
+                        <img src="/uploads/${event.filename}" alt="Motion capture">
+                    </div>
+                `).join('')}
+
+                <h2>Live Stream from ESP32-CAM</h2>
+                <img src="http://192.168.2.154:81/stream" alt="ESP32-CAM Live Stream" style="max-width:100%; border: 1px solid #ccc; border-radius:5px;">
+            </div>
+
+            <script>
+                document.querySelectorAll('.delete-btn').forEach(button => {
+                    button.addEventListener('click', () => {
+                        if (!confirm('DELETE?')) return;
+
+                        const eventDiv = button.closest('.event');
+                        const filename = eventDiv.getAttribute('data-filename');
+
+                        fetch('/api/delete/' + encodeURIComponent(filename), {
+                            method: 'DELETE'
+                        })
+                        .then(res => res.json())
+                        .then(data => {
+                            if (data.success) {
+                                eventDiv.remove();
+                                alert('CTRL + ALT + DEL!');
+                            } else {
+                                alert('ERROR DEL: ' + data.message);
+                            }
+                        })
+                        .catch(err => {
+                            alert('ERROR DEL: ' + err.message);
+                        });
+                    });
+                });
+            </script>
+        </body>
+        </html>
+    `);
+});
+
 app.delete('/api/delete/:filename', (req, res) => {
   const filename = req.params.filename;
   const filepath = path.join(uploadsDir, filename);
