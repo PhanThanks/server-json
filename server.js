@@ -101,59 +101,33 @@ app.get('/', (req, res) => {
 });
 
 // Handle image upload from ESP32-CAM
-app.post('/upload', (req, res) => {
-    console.log('Receiving image from ESP32-CAM...');
+app.post('/upload', express.raw({ type: 'image/jpeg', limit: '5mb' }), (req, res) => {
+  console.log('Receiving image from ESP32-CAM...');
+  
+  const timestamp = moment().format('YYYY-MM-DD_HH-mm-ss');
+  const filename = `motion_${timestamp}.jpg`;
+  const filepath = path.join(uploadsDir, filename);
+  
+  fs.writeFile(filepath, req.body, (err) => {
+    if (err) {
+      console.error('Error saving image:', err);
+      return res.status(500).json({ error: 'Failed to save image' });
+    }
     
-    // Save the binary data as JPEG
-    const timestamp = moment().format('YYYY-MM-DD_HH-mm-ss');
-    const filename = `motion_${timestamp}.jpg`;
-    const filepath = path.join(uploadsDir, filename);
+    console.log(`Image saved: ${filename}`);
     
-    // Write the image data
-    fs.writeFile(filepath, req.body, (err) => {
-        if (err) {
-            console.error('Error saving image:', err);
-            return res.status(500).json({ error: 'Failed to save image' });
-        }
-        
-        console.log(`Image saved: ${filename}`);
-        
-        // Send email notification
-        sendMotionAlert(filename, filepath)
-            .then(() => {
-                console.log('Email sent successfully');
-                
-                // Store motion event
-                motionEvents.push({
-                    timestamp: moment().format('YYYY-MM-DD HH:mm:ss'),
-                    filename: filename,
-                    emailSent: true
-                });
-                
-                res.json({ 
-                    success: true, 
-                    message: 'Image saved and email sent',
-                    filename: filename
-                });
-            })
-            .catch((emailError) => {
-                console.error('Email sending failed:', emailError);
-                
-                // Store motion event with email failure
-                motionEvents.push({
-                    timestamp: moment().format('YYYY-MM-DD HH:mm:ss'),
-                    filename: filename,
-                    emailSent: false
-                });
-                
-                res.json({ 
-                    success: true, 
-                    message: 'Image saved but email failed',
-                    filename: filename,
-                    emailError: emailError.message
-                });
-            });
-    });
+    // gửi email ...
+    sendMotionAlert(filename, filepath)
+      .then(() => {
+        // ghi lại event ...
+        motionEvents.push({ timestamp: moment().format('YYYY-MM-DD HH:mm:ss'), filename, emailSent: true });
+        res.json({ success: true, message: 'Image saved and email sent', filename });
+      })
+      .catch(emailError => {
+        motionEvents.push({ timestamp: moment().format('YYYY-MM-DD HH:mm:ss'), filename, emailSent: false });
+        res.json({ success: true, message: 'Image saved but email failed', filename, emailError: emailError.message });
+      });
+  });
 });
 
 // Serve uploaded images
