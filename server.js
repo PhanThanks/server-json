@@ -181,6 +181,22 @@ app.get('/health', (req, res) => {
     });
 });
 
+app.delete('/api/delete/:filename', (req, res) => {
+  const filename = req.params.filename;
+  const filepath = path.join(uploadsDir, filename);
+
+  fs.unlink(filepath, (err) => {
+    if (err) {
+      console.error('Failed to delete file:', err);
+      return res.status(500).json({ success: false, message: 'Failed to delete file' });
+    }
+
+    // Xóa event tương ứng trong mảng
+    motionEvents = motionEvents.filter(event => event.filename !== filename);
+
+    res.json({ success: true, message: 'File deleted' });
+  });
+});
 // Start server
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
